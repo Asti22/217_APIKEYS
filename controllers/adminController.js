@@ -1,35 +1,39 @@
 const db = require("../db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+require("dotenv").config();
 
+// register admin
 exports.register = async (req, res) => {
-  const { email, password } = req.body;
-  const hash = await bcrypt.hash(password, 10);
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: "All fields required" });
 
-  db.query(
-    "INSERT INTO admins (email, password) VALUES (?,?)",
-    [email, hash],
-    (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ message: "Admin registered" });
-    }
-  );
+    const [existing] = await db.query("SELECT * FROM admins WHERE email = ?", [email]);
+    if (existing.length > 0) return res.status(400).json({ message: "Email already used" });
+
+    const hash = await bcrypt.hash(password, 10);
+    await db.query("INSERT INTO admins (email, password) VALUES (?, ?)", [email, hash]);
+
+    res.json({ message: "Admin registered" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
-exports.login = (req, res) => {
-  const { email, password } = req.body;
+// login admin
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const [admins] = await db.query("SELECT * FROM admins WHERE email = ?", [email]);
+    if (admins.length === 0) return res.status(400).json({ message: "Invalid credentials" });
 
-  db.query("SELECT * FROM admins WHERE email=?", [email], async (err, rows) => {
-    if (err) return res.status(500).json({ error: err });
-    if (rows.length === 0) return res.status(404).json({ message: "Not found" });
+    const match = await bcrypt.compare(password, admins[0].password);
+    if (!match) return res.status(400).json({ message: "Invalid credentials" });
 
-    const admin = rows[0];
-    const ok = await bcrypt.compare(password, admin.password);
-
-    if (!ok) return res.status(401).json({ message: "Wrong password" });
-
-    const token = jwt.sign({ id: admin.id }, process.env.JWT_SECRET);
-
+    const token = jwt.sign({ id: admins[0].id, email }, process.env.JWT_SECRET, { expiresIn: "1h" });
     res.json({ token });
-  });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 };
